@@ -1,0 +1,9 @@
+fastapi==0.95.2
+requests==2.31.0
+python-dotenv==1.0.0
+python-dateutil==2.8.2
+httpx==0.24.1
+numpy==1.24.3
+Pillow==9.5.0
+markdown==3.4.3
+uvicorn==0.22.0
