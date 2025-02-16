@@ -20,7 +20,14 @@ from dotenv import load_dotenv
 # 0) Load Environment & Setup
 ############################
 load_dotenv()  # Loads variables from .env into os.environ
+AIPROXY_TOKEN = os.environ.get("AIPROXY_TOKEN")
+
+if not AIPROXY_TOKEN:
+    raise ValueError("AIPROXY_TOKEN is not set. Please set it as an environment variable.")
 logging.basicConfig(level=logging.INFO, format="%(message)s")
+
+# Set API base URL as a constant.
+OPENAI_API_BASE = "https://aiproxy.sanand.workers.dev/openai/v1"
 
 ############################
 # 1) PATH UTILITIES
@@ -54,7 +61,7 @@ def is_safe_path(path: str) -> bool:
 
 def install_uv_and_run_datagen(user_email: str = "mounesh.kalimisetty@straive.com") -> str:
     """
-    A1: Install 'uv' (if needed) and run datagen.py with the provided user email.
+    A1: Install 'uv' (if not installed) and run datagen.py with the provided user email.
     (Context: Generates data files required for subsequent tasks.)
     """
     try:
@@ -68,6 +75,31 @@ def install_uv_and_run_datagen(user_email: str = "mounesh.kalimisetty@straive.co
     subprocess.check_call(["python", script_path, user_email])
     return "install_uv_and_run_datagen: datagen.py executed successfully."
 
+# New helper for prettier formatting that handles Windows.
+def format_readme(path, prettier_package="prettier@3.4.2"):
+    '''
+    Formats the given file using the specified Prettier package.
+
+    Args:
+        path (str): The path to the file to format.
+        prettier_package (str): The Prettier package version (default: prettier@3.4.2).
+    
+    Returns:    
+        tuple: (status_code, message) where 200 indicates success, 400 otherwise.
+    '''
+    try:
+        # On Windows, 'npx' is often installed as 'npx.cmd'
+        command = ["npx", prettier_package, "--write", path]
+        if os.name == 'nt':
+            command[0] = "npx.cmd"
+        result = subprocess.run(command, check=True, shell=True)
+        if result.returncode == 0:
+            return 200, f"Formatted file: {path}"
+        else:  
+            return 400, f"Failed to format file, return code: {result.returncode}"
+    except subprocess.CalledProcessError as e:
+        return 400, f"Formatting error: {e}"
+
 def format_file_with_prettier(file_path: str = "/data/format.md", prettier_version: str = "3.4.2") -> str:
     """
     A2: Format a file using Prettier.
@@ -77,13 +109,17 @@ def format_file_with_prettier(file_path: str = "/data/format.md", prettier_versi
     if not is_safe_path(file_path):
         raise ValueError(f"Unsafe file path: {file_path}")
     
-    cmd_install = f'npm install prettier@{prettier_version}'
-    subprocess.run(cmd_install, check=True, shell=True)
-    
-    cmd_format = f'npx prettier@{prettier_version} --write "{full_path}"'
-    subprocess.run(cmd_format, check=True, shell=True)
-    
-    return f"format_file_with_prettier: Formatted {file_path} -> {full_path} with Prettier {prettier_version}"
+    # Ensure the prettier package has "prettier@" prefix.
+    if not prettier_version.startswith("prettier@"):
+        prettier_package = "prettier@" + prettier_version
+    else:
+        prettier_package = prettier_version
+
+    status, message = format_readme(full_path, prettier_package=prettier_package)
+    if status == 200:
+        return f"format_file_with_prettier: {message}"
+    else:
+        raise ValueError(message)
 
 def count_weekday_occurrences(weekday: str = "Wednesday", source_path: str = "/data/dates.txt", destination_path: str = "/data/dates-wednesdays.txt") -> str:
     """
@@ -208,14 +244,9 @@ def extract_email_address(source_path: str = "/data/email.txt", destination_path
         "Return only the email address with no additional text:\n\n" + content
     )
     
-    openai_api_base = os.getenv("OPENAI_API_BASE", "https://aiproxy.sanand.workers.dev/openai/v1")
-    openai_api_key = os.getenv("OPENAI_API_KEY")
-    if not openai_api_key:
-        raise RuntimeError("OPENAI_API_KEY not set. Please set it in your .env or environment variables.")
-    
     headers = {
         "Content-Type": "application/json",
-        "Authorization": f"Bearer {openai_api_key}"
+        "Authorization": f"Bearer {os.getenv('AIPROXY_TOKEN')}"
     }
     data = {
         "model": "gpt-4o-mini",
@@ -224,7 +255,7 @@ def extract_email_address(source_path: str = "/data/email.txt", destination_path
             {"role": "user", "content": prompt}
         ]
     }
-    url = f"{openai_api_base}/chat/completions"
+    url = f"{OPENAI_API_BASE}/chat/completions"
     resp = requests.post(url, headers=headers, json=data, timeout=60)
     resp.raise_for_status()
     result = resp.json()
@@ -257,27 +288,21 @@ def extract_credit_card_number(source_path: str = "/data/credit_card.png", desti
     image_base64 = base64.b64encode(image_bytes).decode('utf-8')
     
     prompt = (
-        "Extract the credit card number from the following base64 encoded image. "
-        "Return only the credit card number (digits only) with no extra text:\n\n" + image_base64
+        "Please perform OCR on the attached credit card image and return \nonly the card number as a continuous digit string. \n- Do not include spaces, letters, or other symbols. \n- If a digit is unclear, replace it with “?”. \n- Output nothing else."+ image_base64
     )
-    
-    openai_api_base = os.getenv("OPENAI_API_BASE", "https://aiproxy.sanand.workers.dev/openai/v1")
-    openai_api_key = os.getenv("OPENAI_API_KEY")
-    if not openai_api_key:
-        raise RuntimeError("OPENAI_API_KEY not set. Please set it in your .env or environment variables.")
     
     headers = {
         "Content-Type": "application/json",
-        "Authorization": f"Bearer {openai_api_key}"
+        "Authorization": f"Bearer {os.getenv('AIPROXY_TOKEN')}"
     }
     data = {
         "model": "gpt-4o-mini",
         "messages": [
-            {"role": "system", "content": "You are an assistant with image processing capabilities. Extract the credit card number from the image."},
+            {"role": "system", "content": "You are an OCR assistant. \nWhen the user provides an image of a credit card, do the following:\n\n1. Recognize only the numeric digits from the card number. \n   - Ignore all non-digit characters, including spaces, dashes, letters, or symbols.\n   - If a digit is unclear, replace it with “?”.\n2. Output these digits (and “?” where needed) as one continuous sequence with no spaces or extra characters.\n3. Provide no additional text, commentary, or disclaimers. Only output the digit string itself.\n4. If you cannot detect any digits at all, output an empty string (no characters)."},
             {"role": "user", "content": prompt}
         ]
     }
-    url = f"{openai_api_base}/chat/completions"
+    url = f"{OPENAI_API_BASE}/chat/completions"
     resp = requests.post(url, headers=headers, json=data, timeout=60)
     resp.raise_for_status()
     result = resp.json()
@@ -308,22 +333,17 @@ def find_most_similar_comments(source_path: str = "/data/comments.txt", destinat
     if len(lines) < 2:
         raise ValueError("Not enough comments to compare.")
     
-    openai_api_base = os.getenv("OPENAI_API_BASE", "https://aiproxy.sanand.workers.dev/openai/v1")
-    openai_api_key = os.getenv("OPENAI_API_KEY")
-    if not openai_api_key:
-        raise RuntimeError("OPENAI_API_KEY not set. Please set it in .env or environment variables.")
-    
+    headers = {
+        "Authorization": f"Bearer {os.getenv('AIPROXY_TOKEN')}",
+        "Content-Type": "application/json"
+    }
     import httpx
     import numpy as np
     payload = {
         "model": "text-embedding-3-small",
         "input": lines
     }
-    headers = {
-        "Authorization": f"Bearer {openai_api_key}",
-        "Content-Type": "application/json"
-    }
-    url = f"{openai_api_base}/embeddings"
+    url = f"{OPENAI_API_BASE}/embeddings"
     resp = httpx.post(url, headers=headers, json=payload, timeout=30)
     resp.raise_for_status()
     emb_data = resp.json()
@@ -364,8 +384,7 @@ def sum_gold_ticket_sales(db_path: str = "/data/ticket-sales.db", destination_pa
 def fetch_data_from_api(api_url: str = "https://jsonplaceholder.typicode.com/todos/1", destination_path: str = "/data/fetched.json") -> str:
     """
     B3: Fetch data from an API and save all of its content.
-    Context: This function retrieves the full content returned by the API at the given URL
-             and writes it to the specified destination file (default: '/data/fetched.json').
+    (Context: Retrieves the full content from the API and saves it to '/data/fetched.json'.)
     """
     dp = fix_path(destination_path)
     if not is_safe_path(destination_path):
@@ -373,12 +392,8 @@ def fetch_data_from_api(api_url: str = "https://jsonplaceholder.typicode.com/tod
     
     response = requests.get(api_url, timeout=30)
     response.raise_for_status()
-    
-    # Write the entire response text to the file.
-    # If you expect binary data, use response.content and open the file in "wb" mode.
     with open(dp, "w", encoding="utf-8") as fw:
         fw.write(response.text)
-    
     return f"fetch_data_from_api: Fetched full content from {api_url} and saved to {destination_path}"
 
 def clone_git_repo_and_commit(repo_url: str = "https://github.com/sanand0/sample-repo.git", destination_dir: str = "/data/repo", commit_message: str = "Automated commit by agent") -> str:
@@ -389,7 +404,12 @@ def clone_git_repo_and_commit(repo_url: str = "https://github.com/sanand0/sample
     if not is_safe_path(destination_dir):
         raise ValueError("Unsafe destination directory.")
     if not os.path.exists(dd):
-        subprocess.check_call(["git", "clone", repo_url, dd])
+        try:
+            output = subprocess.check_output(["git", "clone", repo_url, dd], stderr=subprocess.STDOUT, text=True)
+            logging.info("git clone output:\n" + output)
+        except subprocess.CalledProcessError as e:
+            logging.error("git clone failed with output:\n" + e.output)
+            raise RuntimeError(f"Git clone failed with exit status {e.returncode}: {e.output}")
     commit_file = os.path.join(dd, "commit.txt")
     with open(commit_file, "w", encoding="utf-8") as fw:
         fw.write(commit_message)
@@ -502,7 +522,6 @@ def filter_csv_to_json(source_path: str = "/data/sample.csv", destination_path: 
 ############################
 # 4) FUNCTIONS SCHEMA (Combine Phase A and Phase B)
 ############################
-# We already have a FUNCTIONS_SCHEMA for operations tasks; now we add the business tasks.
 FUNCTIONS_SCHEMA = [
     {
         "name": "install_uv_and_run_datagen",
@@ -629,7 +648,7 @@ FUNCTIONS_SCHEMA = [
 BUSINESS_FUNCTIONS_SCHEMA = [
     {
         "name": "fetch_data_from_api",
-        "description": "Fetch data from an API and save it to a file.",
+        "description": "Fetch data from an API and save all of its content to a file.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -735,20 +754,20 @@ BUSINESS_FUNCTIONS_SCHEMA = [
 FUNCTIONS_SCHEMA += BUSINESS_FUNCTIONS_SCHEMA
 
 ############################
-# 5) LLM FUNCTION-CALLING SIMULATION
+# 6) LLM FUNCTION-CALLING SIMULATION
 ############################
 def parse_task_with_llm(user_instruction: str) -> dict:
     """
-    Instruct GPT-4o-Mini (via AI Proxy) to select one of the available tasks (operations or business)
+    Instruct AIPROXY_TOKEN-based GPT-4o-Mini to select one of the available tasks
     and provide all required arguments based on the user's instruction.
     The response must be strictly valid JSON in the format:
       { "name": "<task_function_name>", "arguments": { ... } }
     For any missing argument, use its default value (or an empty string).
     """
-    openai_api_base = os.getenv("OPENAI_API_BASE", "https://aiproxy.sanand.workers.dev/openai/v1")
-    openai_api_key = os.getenv("OPENAI_API_KEY")
-    if not openai_api_key:
-        raise RuntimeError("No OPENAI_API_KEY in environment. Please set it in .env or environment variables.")
+    openai_api_base = OPENAI_API_BASE
+    aip_token = os.getenv("AIPROXY_TOKEN")
+    if not aip_token:
+        raise RuntimeError("No AIPROXY_TOKEN in environment. Please set it in .env or environment variables.")
     
     schema_str = json.dumps(FUNCTIONS_SCHEMA, indent=2)
     system_text = f"""
@@ -771,7 +790,7 @@ No extra text.
 """
     headers = {
         "Content-Type": "application/json",
-        "Authorization": f"Bearer {openai_api_key}"
+        "Authorization": f"Bearer {aip_token}"
     }
     data = {
         "model": "gpt-4o-mini",
@@ -791,7 +810,7 @@ No extra text.
     return fc
 
 ############################
-# 6) DISPATCHER: CALL THE CORRECT TASK FUNCTION
+# 7) DISPATCHER: CALL THE CORRECT TASK FUNCTION
 ############################
 def handle_task(user_instruction: str) -> str:
     fc = parse_task_with_llm(user_instruction)
@@ -838,7 +857,7 @@ def handle_task(user_instruction: str) -> str:
         raise ValueError(f"Unknown function name from LLM: {name}")
 
 ############################
-# 7) FASTAPI APPLICATION
+# 8) FASTAPI APPLICATION
 ############################
 app = FastAPI()
 
@@ -874,7 +893,7 @@ def read_file(path: str = Query(...)):
         return f.read()
 
 ############################
-# 8) TESTING BLOCK: VERIFY ALL TASKS
+# 9) TESTING BLOCK: VERIFY ALL TASKS
 ############################
 if __name__ == "__main__":
     # List of tasks to test along with default arguments.
