@@ -1,5 +1,4 @@
-
-#Task Runner
+##Task Runner
 
 A FastAPI application that exposes multiple “task” endpoints and functions for data processing, file formatting, image manipulation, and more. This project is designed to demonstrate how to dispatch tasks using function-calling logic (similar to OpenAI function calls).
 
